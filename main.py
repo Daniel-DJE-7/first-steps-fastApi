@@ -46,45 +46,6 @@ def get_db():
 
 app = FastAPI(title="Mini Blog")
 
-#POST
-
-BLOG_POST = [
-    {"id": 1, "title": "Hola desde FastAPI", "content": "Mi primer post con FastAPI"},
-    {"id": 2, "title": "Mi segundo POST CON FastAPI", "content": "Mi segundo post con FastAPI"},
-    {"id": 3, "title": "Django vs FastAPI", "content": "FastAPI es más rápido por x razón"},
-    {"id": 4, "title": "Hola desde FastAPI", 
-     "content": "Mi primer post con FastAPI"},
-    {"id": 5, "title": "Mi segundo POST CON FastAPI", 
-     "content": "Mi segundo post con FastAPI",
-     "tag": [
-        {"name": "python"},
-        {"name": "fastapi"},
-        {"name": "cluster"}
-        ]
-     },
-    {"id": 6, "title": "Django vs FastAPI", "content": "FastAPI es más rápido por x razón"},
-    {"id": 7, "title": "Hola desde FastAPI", "content": "Mi primer post con FastAPI"},
-    {"id": 8, "title": "Mi segundo POST CON FastAPI", "content": "Mi segundo post con FastAPI"},
-    {"id": 9, "title": "Django vs FastAPI", 
-     "content": "FastAPI es más rápido por x razón", 
-     "tag": [
-            {"name": "Python"},
-            {"name": "fastapi"},
-            {"name": "Cluster"}
-            ]
-     },
-    {"id": 10, "title": "Hola desde FastAPI", "content": "Mi primer post con FastAPI"},
-    {"id": 11, "title": "Mi segundo POST CON FastAPI", "content": "Mi segundo post con FastAPI"},
-    {"id": 12, "title": "Django vs FastAPI", 
-     "content": "FastAPI es más rápido por x razón", 
-     "tag": [
-            {"name": "python"},
-            {"name": "fastapi"},
-            {"name": "cluster"}
-            ]
-     },
-]
-
 class Tag(BaseModel):
     name: str = Field(..., 
                       min_length=3,
@@ -307,7 +268,7 @@ def get_post_id(post_id: int = Path(
                 ):
     
     post_find = select(PostORM).where(PostORM.id == post_id) 
-    post = db.excecute(post_find).scalar_one_or_none()
+    post = db.execute(post_find).scalar_one_or_none()
     
     #post = db.get(PostORM, post_id) # esto hace que se busque el post en la base de datos por su id
     
@@ -346,21 +307,36 @@ def create_post(post: PostCreate, db: Session = Depends(get_db)):
          response_description="Post actualizado", 
          response_model_exclude_none= True#excluye los valores NONE
          )
-def update_post(post_id: int, data: PostUpdate):
-    for post in BLOG_POST:
-        if post["id"] == post_id:
-            playload = data.model_dump(exclude_unset=True)
-            if "title" in playload: post["title"] = playload["title"]
-            if "content" in playload: post["content"] = playload["content"]
-            return post
-    raise HTTPException(status_code=404, detail="Post no encontrado")
+def update_post(post_id: int, data: PostUpdate, db: Session = Depends(get_db)):
+    #obtenemos el valor del post a través del post_id
+    post_update = db.get(PostORM, post_id)
+    #validar que el post no exista
+    if not post_update:
+        raise HTTPException(status_code=404, detail="Post no encontrado")
+    
+   #Exraer los datos de los campos que envia el usuario
+    updates = data.model_dump(exclude_unset=True)# esto evita que la respuesta aparezca en null en campos que no se envian
+   
+   #extraer el valor
+    for key, value in updates.items():
+        setattr(post_update, key, value) # esto hace que se actualicen los valores del post en la base de datos
+   
+   #agregar guardar en la base de datos
+    db.add(post_update)
+    db.commit()
+    db.refresh(post_update)#aqui se actualiza en la BD
+    
+    return post_update
 
 
 #DELETE
-@app.delete("/posts/{post_id}", status_code=204)
-def delete_post(post_id: int):
-    for index, post in enumerate(BLOG_POST):
-        if post["id"] == post_id:
-            BLOG_POST.pop(index)
-            return 
-    raise HTTPException(status_code=404, detail= "Post no encontrado")
+@app.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_post(post_id: int, db: Session = Depends(get_db)):
+    post_deleted = db.get(PostORM, post_id)
+    if not post_deleted:
+        raise HTTPException(status_code=404, detail = "Post no encontrado")
+    
+    db.delete(post_deleted)
+    db.commit()
+    
+    return 
