@@ -47,7 +47,7 @@ class TagORM(Base):
     __tablename__="tags"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(30), unique=True, index=True)
     
     posts: Mapped[List["PostORM"]] = relationship(
         secondary=post_tags, #cual es la tabla con la cual se va a enlazar o la referencia
@@ -66,8 +66,8 @@ class PostORM(Base):
     create_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     
     #informamos a los post la relación con la clase Author
-    author_id: Mapped[Optional[int]] = mapped_column(ForeignKey("authors_id"))#esta relacionando la llave primaria con la foranea como en sql
-    author: Mapped[Optional[int]] = relationship(back_populates="posts") #esta es la relacion de 1 a muchos, 1 author tiene muchos posts
+    author_id: Mapped[Optional[int]] = mapped_column(ForeignKey("authors.id"))#esta relacionando la llave primaria con la foranea como en sql
+    author: Mapped[Optional["AuthorORM"]] = relationship(back_populates="posts") #esta es la relacion de 1 a muchos, 1 author tiene muchos posts
     
     tags: Mapped[List["TagORM"]] = relationship(
         secondary=post_tags,# aqui le decimos que queremos que tags sea relacionado con la tabla intermedia que es post_tags
@@ -107,7 +107,7 @@ class Author(BaseModel):
 class PostBase(BaseModel):
     title: Optional[str] = "Título no disponible"
     content: str
-    tag: Optional[List[Tag]] = Field(default_factory=list) # esto crea un array [] vacía por cada objeto en el programa
+    tags: Optional[List[Tag]] = Field(default_factory=list) # esto crea un array [] vacía por cada objeto en el programa
     author: Optional[Author] = None
     
     model_config = ConfigDict(from_attributes=True)
@@ -334,8 +334,31 @@ def get_post_id(post_id: int = Path(
           status_code=status.HTTP_201_CREATED
           )
 def create_post(post: PostCreate, db: Session = Depends(get_db)):
-   
-   new_post = PostORM(title=post.title, content=post.content)#llamamos el model ORM creado y le pasa el titulo y contenido del post que se recibe en el body de la petición, esto es para crear un nuevo post en la base de datos
+   author_obj = None
+   #obtenemos el author en caso de que exista
+   if post.author:
+        author_obj = db.execute(
+            select(AuthorORM).where(AuthorORM.email == post.author.email)
+        ).scalar_one_or_none()
+        
+        if not author_obj:
+            author_obj = AuthorORM(name=post.author.name, email=post.author.email)
+            
+            db.add(author_obj)
+            db.flush()# le creamos un id a author_obj
+    
+        
+   new_post = PostORM(title=post.title, content=post.content, author=author_obj)#llamamos el model ORM creado y le pasa el titulo y contenido del post que se recibe en el body de la petición, esto es para crear un nuevo post en la base de datos
+   for tag in post.tag:
+        tag_obj = db.execute(
+           select(TagORM).where(TagORM.name.ilike(tag.name))
+        ).scalar_one_or_none()
+        if not tag_obj:
+            tag_obj = TagORM(name=tag.name)
+            db.add(tag_obj)
+            db.flush()     
+        new_post.tags.append(tag_obj)
+        
    try:
        # 1. se debe marcar la inserción
        db.add(new_post)
