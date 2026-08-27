@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, field_validator, EmailStr, ConfigDict
 from typing import Optional, List, Union, Literal
 from math import ceil
 from sqlalchemy import create_engine, Integer, String, DateTime, Text, select, func, UniqueConstraint, ForeignKey, Table, Column
-from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column, relationship, selectinload, joinedload
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 DATABASE_URL = os.getenv("DATABASE_URL","sqlite:///./blog.db")
@@ -270,32 +270,29 @@ def list_posts(text: Optional[str] = Query(
                         )
 
 @app.get("/posts/by-tags", response_model=List[PostPublic])
-def filter_by_tags(
-    tags: List[str] = Query(
-                            ..., min_length=2, 
+def filter_by_tags(tags: List[str] = Query(
+                            ..., min_length=1, 
                             description="Una o más etiquetas. Ejemplo: ?tags=python&tags=fastapi"
-                            )
+                            ),
+                   db: Session = Depends(get_db)
     ):
+    normailized_tag_names = [tag.strip().lower() for tag in tags if tag.strip()]#strip remueve los espacios en blanco del texto
     
-    # tags_lower = []
-    # for tag in tags:        tags_lower.append(tag.lower())
+    if not normailized_tag_names:
+        return []
     
-    # filtered_posts = []
-    # for post in BLOG_POST:
-    #     post_tags = post.get("tag", [])
-    #     for tag in post_tags:
-    #         if tag["name"].lower() in tags_lower:
-    #             filtered_posts.append(post)
-    #             break
+    # esto crea una query para los post y luego para todas las demás etiquetas
+    post_list = (select(PostORM)
+                 .options(
+                     selectinload(PostORM.tags),
+                     joinedload(PostORM.author)
+                     ).where(PostORM.tags.any(func.lower(TagORM.name).in_(normailized_tag_names)))# si el nombre de la etiqueta del post está dentro de la lista normalizada, significa que está incluida y luego se ordena
+                 .order_by(PostORM.id.asc())
+                )
     
-    #     return filtered_posts
+    post = db.execute(post_list).scalars().all()
     
-    tags_lower = [tag.lower() for tag in tags]
-    
-    return [
-        post for post in BLOG_POST 
-        if any(tag["name"].lower() in tags_lower for tag in post.get("tag", []))
-    ]
+    return post
 
 
 # PATH PARAMETERS, SIRVE PARA FILTRAR LOS ELEMENTOS QUE QUIERO VER
