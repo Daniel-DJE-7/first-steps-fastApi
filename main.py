@@ -8,9 +8,11 @@ from math import ceil
 from sqlalchemy import create_engine, Integer, String, DateTime, Text, select, func, UniqueConstraint, ForeignKey, Table, Column
 from sqlalchemy.orm import sessionmaker, Session, DeclarativeBase, Mapped, mapped_column, relationship, selectinload, joinedload
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+#from dotenv import load_dotenv#poner esto en caso de que no encuentre la BD
+
+#load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL","sqlite:///./blog.db")
-print("conectado a: ", DATABASE_URL)
 
 engine_kwargs = {}
 if DATABASE_URL.startswith("sqlite"):
