@@ -1,5 +1,3 @@
-import os
-from datetime import datetime
 from string import capwords
 from fastapi import FastAPI, Query, Body, HTTPException, Path, status, Depends
 from pydantic import BaseModel, Field, field_validator, EmailStr, ConfigDict
@@ -12,177 +10,14 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 #load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL","sqlite:///./blog.db")
-
-engine_kwargs = {}
-if DATABASE_URL.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
-
-#conectar a la base de datos
-engine = create_engine(DATABASE_URL, echo=True, future=True, **engine_kwargs)
-#crear una sesion
-
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)
-
-
-class Base(DeclarativeBase):
-    pass
-
-post_tags = Table(
-    "post_tags",# nombre de la tabla
-    Base.metadata,
-    Column("post_id", ForeignKey("posts.id", ondelete="CASCADE"), primary_key=True),
-    Column("tag_id", ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
-)
-
-class AuthorORM(Base):
-    __tablename__ = "authors"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    email: Mapped[str] = mapped_column(String(100), unique=True, index=True)
-
-    #creamos la relación de uno a muchos
-    posts: Mapped[List["PostORM"]] = relationship(back_populates="author")# este es el nombre con el cual se relaciona con los Post
-
-class TagORM(Base):
-    __tablename__="tags"
-    
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    name: Mapped[str] = mapped_column(String(30), unique=True, index=True)
-    
-    posts: Mapped[List["PostORM"]] = relationship(
-        secondary=post_tags, #cual es la tabla con la cual se va a enlazar o la referencia
-        back_populates="tags",#como se va a acceder a las tags
-        lazy="selectin"
-    )
-
-class PostORM(Base):
-    __tablename__ = "posts"# Este es el nombre de la tabla en la base de datos
-    __table_args__ = (UniqueConstraint("title", name="unique_post_title"),) # esto hace que el título del post sea único, es decir, que no se puedan crear dos posts con el mismo título
-    
-    #Los siguientes son los atributos de la tabla
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    title: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    create_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    
-    #informamos a los post la relación con la clase Author
-    author_id: Mapped[Optional[int]] = mapped_column(ForeignKey("authors.id"))#esta relacionando la llave primaria con la foranea como en sql
-    author: Mapped[Optional["AuthorORM"]] = relationship(back_populates="posts") #esta es la relacion de 1 a muchos, 1 author tiene muchos posts
-    
-    tags: Mapped[List["TagORM"]] = relationship(
-        secondary=post_tags,# aqui le decimos que queremos que tags sea relacionado con la tabla intermedia que es post_tags
-        back_populates="posts",# aqui se ele dice cómo va a acceder los tags a los posts
-        lazy="selectin", # la búsqueda se va a hacer con selectin
-        passive_deletes=True# esto es para respetar el ON DELETE CASCADE
-    )
     
 Base.metadata.create_all(bind=engine) # crea la tabla en la base de datos si no existe, esto es para etapa de desarrollo porque para producción se van a crear migraciones
 
-def get_db():
-    db = SessionLocal() # inicializa la sesion a la base de datos
-    try:
-        yield db # yield devuelve la sesion a la base de datos, pero no cierra la sesion, por eso se usa el finally para cerrarla
-    finally:
-        db.close() # cierra la sesion a la base de datos
-
-
 app = FastAPI(title="Mini Blog")
-
-class Tag(BaseModel):
-    name: str = Field(..., 
-                      min_length=3,
-                      max_length=30,
-                      description="Nombre de la etiqueta"
-                      )
-    
-    model_config = ConfigDict(from_attributes=True)# esto significa que esta clase tambien a¡va a aceptar objetos ORM porque si no, solo recibiria dictionarios y si no hay dictionarios, no sabe que hacer
-
-class Author(BaseModel):
-    name: str
-    email: EmailStr
-    
-    model_config = ConfigDict(from_attributes=True)
-
-#CAMPOS OPCIONALES POR DEFECTO
-class PostBase(BaseModel):
-    title: Optional[str] = "Título no disponible"
-    content: str
-    tags: Optional[List[Tag]] = Field(default_factory=list) # esto crea un array [] vacía por cada objeto en el programa
-    author: Optional[Author] = None
-    
-    model_config = ConfigDict(from_attributes=True)
-  
-  
-##VALIDACIONES FIELD Y AVANZADAS   
-class PostCreate(BaseModel):
-    title: str = Field(
-        ...,
-        min_length=3,
-        max_length=100,
-        description="Título del post (mínimo 3 caracteres, max 100)",
-        examples= ["Mi primer post con Fast API"]
-    )
-    content: Optional[str] = Field(
-        default="Contenido no disponible",
-        min_length=10,
-        description="Contenido mínimo de 10 carácteres",
-        examples= ["Este es un contenido valido porque tiene 10 o más caracteres"]
-    )
-    tag: List[Tag] = Field(default_factory=list)
-    author: Optional[Author] = None
-    
-    ##VALIDACIONES PERSONALIZADAS
-    @field_validator("title")
-    @classmethod
-    def not_allowrd_title(cls, value:str) -> str:
-        banned_words: list[str] = [
-            "marica",
-            "porno",
-            "idiota",
-            "petro"
-        ] 
-        for words in banned_words:
-            if words in value.lower():
-                raise ValueError(f"El título no puede contener la palabra '{words}'")
-        return value
-        
-
-class PostUpdate(BaseModel):
-    title: Optional[str] = Field(None, min_length=3, max_length=100)
-    content: Optional[str] = None
-    
-#RESPUESTAS PERSONALIZADAS
-class PostPublic(PostBase):
-    id: int
-    #model config sirve para que se pueda enviar los datos de la clase a la ORM, es decir, que los datos que se envien se conviertan a objetos JSON
-    model_config = ConfigDict(from_attributes=True) # esto hace que se pueda usar el modelo con objetos de la base de datos, es decir, que se pueda usar con SQLAlchemy
-
-class PostSummary(BaseModel):
-    id: int
-    title: str
-    
-    model_config = ConfigDict(from_attributes=True) # esto hace que se pueda usar el modelo con objetos de la base de datos, es decir, que se pueda usar con SQLAlchemy
-
-class PaginatedPost(BaseModel):
-    page: int
-    post_per_page: int
-    total: int
-    total_pages: int
-    has_prev: bool
-    has_next: bool
-    sort_by: Literal["id", "title"]
-    direction: Literal["asc", "desc"]
-    search: Optional[str] = None #si es por default, va un none
-    items: List[PostPublic]
-    
-
 
 @app.get("/")
 def home():
     return {'message': 'Bienvenido al mini Blog por Daniel Figueredo h'}
-
 
 # QUERY PARAMS
 @app.get("/posts", response_model=PaginatedPost)
@@ -278,23 +113,23 @@ def filter_by_tags(tags: List[str] = Query(
                             ),
                    db: Session = Depends(get_db)
     ):
-    normailized_tag_names = [tag.strip().lower() for tag in tags if tag.strip()]#strip remueve los espacios en blanco del texto
+    # normailized_tag_names = [tag.strip().lower() for tag in tags if tag.strip()]#strip remueve los espacios en blanco del texto
     
-    if not normailized_tag_names:
-        return []
+    # if not normailized_tag_names:
+    #     return []
     
-    # esto crea una query para los post y luego para todas las demás etiquetas
-    post_list = (select(PostORM)
-                 .options(
-                     selectinload(PostORM.tags),
-                     joinedload(PostORM.author)
-                     ).where(PostORM.tags.any(func.lower(TagORM.name).in_(normailized_tag_names)))# si el nombre de la etiqueta del post está dentro de la lista normalizada, significa que está incluida y luego se ordena
-                 .order_by(PostORM.id.asc())
-                )
+    # # esto crea una query para los post y luego para todas las demás etiquetas
+    # post_list = (select(PostORM)
+    #              .options(
+    #                  selectinload(PostORM.tags),
+    #                  joinedload(PostORM.author)
+    #                  ).where(PostORM.tags.any(func.lower(TagORM.name).in_(normailized_tag_names)))# si el nombre de la etiqueta del post está dentro de la lista normalizada, significa que está incluida y luego se ordena
+    #              .order_by(PostORM.id.asc())
+    #             )
     
-    post = db.execute(post_list).scalars().all()
+    # post = db.execute(post_list).scalars().all()
     
-    return post
+    # return post
 
 
 # PATH PARAMETERS, SIRVE PARA FILTRAR LOS ELEMENTOS QUE QUIERO VER
@@ -314,8 +149,8 @@ def get_post_id(post_id: int = Path(
                 db: Session = Depends(get_db)
                 ):
     
-    post_find = select(PostORM).where(PostORM.id == post_id) 
-    post = db.execute(post_find).scalar_one_or_none()
+    # post_find = select(PostORM).where(PostORM.id == post_id) 
+    # post = db.execute(post_find).scalar_one_or_none()
     
     #post = db.get(PostORM, post_id) # esto hace que se busque el post en la base de datos por su id
     
